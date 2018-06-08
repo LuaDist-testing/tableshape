@@ -59,6 +59,9 @@ do
   _base_0.__class = _class_0
   local self = _class_0
   self.is_base_type = function(self, val)
+    if not (type(val) == "table") then
+      return false
+    end
     local cls = val and val.__class
     if not (cls) then
       return false
@@ -273,7 +276,7 @@ do
         if item == value then
           return true
         end
-        if item.check_value and BaseType:is_base_type(item) then
+        if BaseType:is_base_type(item) and item.check_value then
           if item:check_value(value) then
             return true
           end
@@ -359,7 +362,7 @@ do
       end
       local fixed = false
       local copy
-      if self.expected.repair and BaseType:is_base_type(self.expected) then
+      if BaseType:is_base_type(self.expected) and self.expected.repair then
         for idx, item in ipairs(tbl) do
           local item_value, item_fixed = self.expected:repair(item)
           if item_fixed then
@@ -416,7 +419,7 @@ do
       if value == self.expected then
         return true
       end
-      if self.expected.check_value and BaseType:is_base_type(self.expected) then
+      if BaseType:is_base_type(self.expected) and self.expected.check_value then
         local res, err = self.expected:check_value(value)
         if not (res) then
           return nil, "item " .. tostring(key) .. " in array does not match: " .. tostring(err)
@@ -603,7 +606,7 @@ do
         if remaining_keys then
           remaining_keys[shape_key] = nil
         end
-        if shape_val.repair and BaseType:is_base_type(shape_val) then
+        if BaseType:is_base_type(shape_val) and shape_val.repair then
           local field_value, field_fixed = shape_val:repair(item_value)
           if field_fixed then
             copy = copy or (function()
@@ -654,13 +657,13 @@ do
       if value == expected_value then
         return true
       end
-      if expected_value.check_value and BaseType:is_base_type(expected_value) then
+      if BaseType:is_base_type(expected_value) and expected_value.check_value then
         local res, err = expected_value:check_value(value)
         if not (res) then
           return nil, "field `" .. tostring(key) .. "`: " .. tostring(err)
         end
       else
-        return nil, "field `" .. tostring(key) .. "` expected `" .. tostring(expected_value) .. "`"
+        return nil, "field `" .. tostring(key) .. "` expected `" .. tostring(expected_value) .. "`, got `" .. tostring(value) .. "`"
       end
       return true
     end,
@@ -822,6 +825,7 @@ local types = setmetatable({
   func = Type("function"),
   boolean = Type("boolean"),
   userdata = Type("userdata"),
+  ["nil"] = Type("nil"),
   table = Type("table"),
   array = ArrayType(),
   integer = Pattern("^%d+$", {
@@ -847,5 +851,5 @@ return {
   check_shape = check_shape,
   types = types,
   BaseType = BaseType,
-  VERSION = "1.2.0"
+  VERSION = "1.2.1"
 }

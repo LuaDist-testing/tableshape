@@ -106,6 +106,13 @@ describe "tableshape", ->
     assert.same true, (misc "g")
     assert.same nil, (misc nil)
 
+    more = types.one_of {true, 123}
+    assert.same nil, (more "c")
+    assert.same nil, (more false)
+    assert.same nil, (more 124)
+    assert.same true, (more 123)
+    assert.same true, (more true)
+
   it "tests shape", ->
     check = types.shape { color: "red" }
     assert.same nil, (check color: "blue")
@@ -156,6 +163,52 @@ describe "tableshape", ->
         age: 3
       }
     )
+
+  it "tests shape with literals", ->
+    check = types.shape {
+      color: "green"
+      weight: 123
+      ready: true
+    }
+
+    assert.same nil, (
+      check {
+        color: "greenz"
+        weight: 123
+        ready: true
+      }
+    )
+
+    assert.same nil, (
+      check {
+        color: "greenz"
+        weight: 125
+        ready: true
+      }
+    )
+
+    assert.same nil, (
+      check {
+        color: "greenz"
+        weight: 125
+        ready: false
+      }
+    )
+
+    assert.same nil, (
+      check {
+        free: true
+      }
+    )
+
+    assert.same true, (
+      check {
+        color: "green"
+        weight: 123
+        ready: true
+      }
+    )
+
 
   it "tests pattern", ->
     t = types.pattern "^hello"
@@ -237,6 +290,13 @@ describe "tableshape", ->
       }
     )
 
+    twothreefours = types.array_of 234
+
+    assert.same {true}, {twothreefours {}}
+    assert.same {true}, {twothreefours {234}}
+    assert.same {true}, {twothreefours {234, 234}}
+    assert.same nil, (twothreefours {"uh"})
+
   describe "repair", ->
     it "doesn't repair basic type", ->
       assert.same {
@@ -284,7 +344,7 @@ describe "tableshape", ->
         assert.same "hello", key
         assert.same "zone", val
         assert.same "world", expected_val
-        assert.same "field `hello` expected `world`", err
+        assert.same "field `hello` expected `world`, got `zone`", err
         "world"
 
       assert.same { { hello: "world" }, true }, { t\repair { hello: "zone" } }

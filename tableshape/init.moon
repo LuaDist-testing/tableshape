@@ -1,5 +1,7 @@
 class BaseType
   @is_base_type: (val) =>
+    return false unless type(val) == "table"
+
     cls = val and val.__class
     return false unless cls
     return true if BaseType == cls
@@ -109,7 +111,7 @@ class OneOf extends BaseType
     for item in *@items
       return true if item == value
 
-      if item.check_value and BaseType\is_base_type item
+      if BaseType\is_base_type(item) and item.check_value
         return true if item\check_value value
 
     err_strs = for i in *@items
@@ -142,7 +144,7 @@ class ArrayOf extends BaseType
     fixed = false
     local copy
 
-    if @expected.repair and BaseType\is_base_type @expected
+    if BaseType\is_base_type(@expected) and @expected.repair
       -- use the repair function built into type checker
       for idx, item in ipairs tbl
         item_value, item_fixed = @expected\repair item
@@ -173,7 +175,7 @@ class ArrayOf extends BaseType
   check_field: (key, value, tbl) =>
     return true if value == @expected
 
-    if @expected.check_value and BaseType\is_base_type @expected
+    if BaseType\is_base_type(@expected) and @expected.check_value
       res, err = @expected\check_value value
       unless res
         return nil, "item #{key} in array does not match: #{err}"
@@ -269,7 +271,7 @@ class Shape extends BaseType
         remaining_keys[shape_key] = nil
 
       -- does the value know how to repair itself?
-      if shape_val.repair and BaseType\is_base_type shape_val
+      if BaseType\is_base_type(shape_val) and shape_val.repair
         field_value, field_fixed = shape_val\repair item_value
         if field_fixed
           copy or= {k,v for k,v in pairs tbl}
@@ -298,13 +300,13 @@ class Shape extends BaseType
   check_field: (key, value, expected_value, tbl) =>
     return true if value == expected_value
 
-    if expected_value.check_value and BaseType\is_base_type expected_value
+    if BaseType\is_base_type(expected_value) and expected_value.check_value
       res, err = expected_value\check_value value
 
       unless res
         return nil, "field `#{key}`: #{err}"
     else
-      return nil, "field `#{key}` expected `#{expected_value}`"
+      return nil, "field `#{key}` expected `#{expected_value}`, got `#{value}`"
 
     true
 
@@ -365,6 +367,7 @@ types = setmetatable {
   func: Type "function"
   boolean: Type "boolean"
   userdata: Type "userdata"
+  nil: Type "nil"
   table: Type "table"
   array: ArrayType!
 
@@ -384,4 +387,4 @@ check_shape = (value, shape) ->
   assert shape.check_value, "missing check_value method from shape"
   shape\check_value value
 
-{ :check_shape, :types, :BaseType, VERSION: "1.2.0" }
+{ :check_shape, :types, :BaseType, VERSION: "1.2.1" }

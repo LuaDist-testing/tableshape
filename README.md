@@ -231,9 +231,13 @@ local url_shape = types.pattern("^https?://"):on_repair(function(val)
 end)
 ```
 
-Any values that match the type checker are returned unchanged when repaired. If
-the type checker is not matched then the repair callback is used to fix the
-value.
+If a repair is not required, the same exact value is returned. If a repair is
+required, the callback is used to create a new repaired object that is
+returned.
+
+> If you pass a mutable object, like a table, then on repair a brand new table
+> will be returned. The original object will not be mutated. If a repair is not
+> necessary then that same table is returned.
 
 ```lua
 url_shape:repair("https://itch.io") --> https://itch.io
@@ -258,6 +262,40 @@ local fixed_urls = urls_array:repair({
 })
 ```
 
+If the individual components of a compound type checker do not have an
+appropriate repair callback, then the repair callback of the compound type
+checker is used. The first argument of this callback is the kind of error it
+encountered.
+
+For example we can remove extra fields from a table:
+
+```lua
+local types = require("tableshape").types
+
+local table_t = types.shape({
+  name = types.string,
+}):on_repair(function(msg, field, value)
+  if msg == "extra_field" then
+    return nil -- clear the field by returning nothing
+  else
+    error("todo: implement repair for: " .. msg)
+  end
+end)
+
+local res = table_t:repair({
+  name = "leaf",
+  color = "blue",
+})
+
+-- returns:
+-- {
+--   name = "leaf"
+-- }
+```
+
+The available repair types for a `types.shape` are `"extra_field"`,
+`"field_invalid"`, and `"table_invalid"`.
+
 ## Reference
 
 ```lua
@@ -278,6 +316,14 @@ local t = types.shape{
   name = types.string
 }
 ```
+
+##### Repair callback
+
+The first argument of the repair callback is a type string which indicates what
+
+* `table_invalid` - Receives `error_message`, `original_value`. The type of the value is not a table, the return value of the callback replaces the value. No further checking is done.
+* `field_invalid` - Receives `field_key`, `field_value`, `error_message`, `expected_type`. The return value is used to replace the field in the table. Return `nil` to remove the field.
+* `extra_field` - Receives `field_key`, `field_value`. The return value is used to replace the field in the table. Return `nil` to remove the field.
 
 #### `types.array_of(item_type)`
 
