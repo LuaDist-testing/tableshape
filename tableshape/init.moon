@@ -11,6 +11,20 @@ class BaseType
   check_value: =>
     error "override me"
 
+  repair: (val, fix_fn) =>
+    fixed = false
+
+    pass, err = @check_value val
+
+    unless pass
+      fix_fn or= @opts and @opts.repair
+      assert fix_fn, "missing repair function for: #{err}"
+
+      fixed = true
+      val = fix_fn val, err
+
+    val, fixed
+
   check_optional: (value) =>
     value == nil and @opts and @opts.optional
 
@@ -40,6 +54,9 @@ class Type extends BaseType
   is_optional: =>
     Type @t, @clone_opts optional: true
 
+  on_repair: (repair_fn) =>
+    Type @t, @clone_opts repair: repair_fn
+
   check_value: (value) =>
     return true if @check_optional value
 
@@ -56,6 +73,9 @@ class ArrayType extends BaseType
 
   is_optional: =>
     ArrayType @clone_opts optional: true
+
+  on_repair: (repair_fn) =>
+    ArrayType @clone_opts repair: repair_fn
 
   check_value: (value) =>
     return true if @check_optional value
@@ -80,6 +100,9 @@ class OneOf extends BaseType
   is_optional: =>
     OneOf @items, @clone_opts optional: true
 
+  on_repair: (repair_fn) =>
+    OneOf @items, @clone_opts repair: repair_fn
+
   check_value: (value) =>
     return true if @check_optional value
 
@@ -99,32 +122,87 @@ class OneOf extends BaseType
     nil, "value `#{value}` did not match one of: #{err_str}"
 
 class ArrayOf extends BaseType
+  @type_err_message: "expecting table"
+
   new: (@expected, @opts) =>
 
   is_optional: =>
     ArrayOf @expected, @clone_opts optional: true
+
+  on_repair: (repair_fn) =>
+    ArrayOf @expected, @clone_opts repair: repair_fn
+
+  repair: (tbl, repair_fn) =>
+    return tbl, false if @check_optional tbl
+    unless type(tbl) == "table"
+      fix_fn or= @opts and @opts.repair
+      assert fix_fn, "missing repair function for: #{@@type_err_message}"
+      return fix_fn("table_invalid", @@type_err_message, tbl), true
+
+    fixed = false
+    local copy
+
+    if @expected.repair and BaseType\is_base_type @expected
+      -- use the repair function built into type checker
+      for idx, item in ipairs tbl
+        item_value, item_fixed = @expected\repair item
+        if item_fixed
+          fixed = true
+          copy or= [v for v in *tbl[1,(idx - 1)]]
+          if item_value != nil
+            table.insert copy, item_value
+        else
+          if copy
+            table.insert copy, item
+    else
+      for idx, item in ipairs tbl
+        pass, err = @check_field shape_key, item_value, shape_val, tbl
+        if pass
+          if copy
+            table.insert copy, item
+        else
+          fix_fn or= @opts and @opts.repair
+          assert fix_fn, "missing repair function for: #{err}"
+
+          fixed = true
+          copy or= [v for v in *tbl[1,(idx - 1)]]
+          table.insert copy, fix_fn "field_invalid", idx, item
+
+    copy or tbl, fixed
+
+  check_field: (key, value, tbl) =>
+    return true if value == @expected
+
+    if @expected.check_value and BaseType\is_base_type @expected
+      res, err = @expected\check_value value
+      unless res
+        return nil, "item #{key} in array does not match: #{err}"
+    else
+      return nil, "item #{key} in array does not match `#{@expected}`"
+
+    true
 
   check_value: (value) =>
     return true if @check_optional value
     return nil, "expected table for array_of" unless type(value) == "table"
 
     for idx, item in ipairs value
-      continue if @expected == item
-
-      if @expected.check_value and BaseType\is_base_type @expected
-        res, err = @expected\check_value item
-        unless res
-          return nil, "item #{idx} in array does not match: #{err}"
-      else
-        return nil, "item #{idx} in array does not match `#{@expected}`"
+      pass, err = @check_field idx, item, value
+      unless pass
+        return nil, err
 
     true
 
 class MapOf extends BaseType
+  -- TODO: this needs its own repair implementation
+
   new: (@expected_key, @expected_value, @opts) =>
 
   is_optional: =>
     MapOf @expected_key, @expected_value, @clone_opts optional: true
+
+  on_repair: (repair_fn) =>
+    MapOf @expected_key, @expected_value, @clone_opts repair: repair_fn
 
   check_value: (value) =>
     return true if @check_optional value
@@ -155,19 +233,84 @@ class MapOf extends BaseType
     true
 
 class Shape extends BaseType
+  @type_err_message: "expecting table"
+
   new: (@shape, @opts) =>
     assert type(@shape) == "table", "expected table for shape"
 
   is_optional: =>
     Shape @shape, @clone_opts optional: true
 
+  on_repair: (repair_fn) =>
+    Shape @shape, @clone_opts repair: repair_fn
+
   -- don't allow extra fields
   is_open: =>
     Shape @shape, @clone_opts open: true
 
+  repair: (tbl, fix_fn) =>
+    return tbl, false if @check_optional tbl
+    unless type(tbl) == "table"
+      fix_fn or= @opts and @opts.repair
+      assert fix_fn, "missing repair function for: #{@@type_err_message}"
+      return fix_fn("table_invalid", @@type_err_message, tbl), true
+
+    fixed = false
+
+    remaining_keys = unless @opts and @opts.open
+      {key, true for key in pairs tbl}
+
+    local copy
+
+    for shape_key, shape_val in pairs @shape
+      item_value = tbl[shape_key]
+
+      if remaining_keys
+        remaining_keys[shape_key] = nil
+
+      -- does the value know how to repair itself?
+      if shape_val.repair and BaseType\is_base_type shape_val
+        field_value, field_fixed = shape_val\repair item_value
+        if field_fixed
+          copy or= {k,v for k,v in pairs tbl}
+          fixed = true
+          copy[shape_key] = field_value
+      else
+        -- check the field, repair with table's repair function
+        pass, err = @check_field shape_key, item_value, shape_val, tbl
+        unless pass
+          fix_fn or= @opts and @opts.repair
+          assert fix_fn, "missing repair function for: #{err}"
+          fixed = true
+          copy or= {k,v for k,v in pairs tbl}
+          copy[shape_key] = fix_fn "field_invalid", shape_key, item_value, err, shape_val
+
+    if remaining_keys and next remaining_keys
+      fix_fn or= @opts and @opts.repair
+      copy or= {k,v for k,v in pairs tbl}
+      assert fix_fn, "missing repair function for: extra field"
+      for k in pairs remaining_keys
+        fixed = true
+        copy[k] = fix_fn "extra_field", k, copy[k]
+
+    copy or tbl, fixed
+
+  check_field: (key, value, expected_value, tbl) =>
+    return true if value == expected_value
+
+    if expected_value.check_value and BaseType\is_base_type expected_value
+      res, err = expected_value\check_value value
+
+      unless res
+        return nil, "field `#{key}`: #{err}"
+    else
+      return nil, "field `#{key}` expected `#{expected_value}`"
+
+    true
+
   check_value: (value) =>
     return true if @check_optional value
-    return nil, "expecting table" unless type(value) == "table"
+    return nil, @@type_err_message unless type(value) == "table"
 
     remaining_keys = unless @opts and @opts.open
       {key, true for key in pairs value}
@@ -178,15 +321,8 @@ class Shape extends BaseType
       if remaining_keys
         remaining_keys[shape_key] = nil
 
-      continue if shape_val == item_value
-
-      if shape_val.check_value and BaseType\is_base_type shape_val
-        res, err = shape_val\check_value item_value
-
-        unless res
-          return nil, "field `#{shape_key}`: #{err}"
-      else
-        return nil, "field `#{shape_key}` expected `#{shape_val}`"
+      pass, err = @check_field shape_key, item_value, shape_val, value
+      return nil, err unless pass
 
     if remaining_keys
       if extra_key = next remaining_keys
@@ -199,6 +335,12 @@ class Pattern extends BaseType
 
   is_optional: =>
     Pattern @pattern, @clone_opts optional: true
+
+  on_repair: (repair_fn) =>
+    Pattern @pattern, @clone_opts repair: repair_fn
+
+  describe: =>
+    "pattern `#{@pattern}`"
 
   check_value: (value) =>
     return true if @check_optional value
@@ -242,4 +384,4 @@ check_shape = (value, shape) ->
   assert shape.check_value, "missing check_value method from shape"
   shape\check_value value
 
-{ :check_shape, :types, :BaseType, VERSION: "1.1.0" }
+{ :check_shape, :types, :BaseType, VERSION: "1.2.0" }

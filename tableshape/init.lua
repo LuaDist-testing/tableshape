@@ -5,6 +5,17 @@ do
     check_value = function(self)
       return error("override me")
     end,
+    repair = function(self, val, fix_fn)
+      local fixed = false
+      local pass, err = self:check_value(val)
+      if not (pass) then
+        fix_fn = fix_fn or (self.opts and self.opts.repair)
+        assert(fix_fn, "missing repair function for: " .. tostring(err))
+        fixed = true
+        val = fix_fn(val, err)
+      end
+      return val, fixed
+    end,
     check_optional = function(self, value)
       return value == nil and self.opts and self.opts.optional
     end,
@@ -117,6 +128,11 @@ do
         optional = true
       }))
     end,
+    on_repair = function(self, repair_fn)
+      return Type(self.t, self:clone_opts({
+        repair = repair_fn
+      }))
+    end,
     check_value = function(self, value)
       if self:check_optional(value) then
         return true
@@ -172,6 +188,11 @@ do
     is_optional = function(self)
       return ArrayType(self:clone_opts({
         optional = true
+      }))
+    end,
+    on_repair = function(self, repair_fn)
+      return ArrayType(self:clone_opts({
+        repair = repair_fn
       }))
     end,
     check_value = function(self, value)
@@ -235,6 +256,11 @@ do
     is_optional = function(self)
       return OneOf(self.items, self:clone_opts({
         optional = true
+      }))
+    end,
+    on_repair = function(self, repair_fn)
+      return OneOf(self.items, self:clone_opts({
+        repair = repair_fn
       }))
     end,
     check_value = function(self, value)
@@ -317,6 +343,89 @@ do
         optional = true
       }))
     end,
+    on_repair = function(self, repair_fn)
+      return ArrayOf(self.expected, self:clone_opts({
+        repair = repair_fn
+      }))
+    end,
+    repair = function(self, tbl, repair_fn)
+      if self:check_optional(tbl) then
+        return tbl, false
+      end
+      if not (type(tbl) == "table") then
+        local fix_fn = fix_fn or (self.opts and self.opts.repair)
+        assert(fix_fn, "missing repair function for: " .. tostring(self.__class.type_err_message))
+        return fix_fn("table_invalid", self.__class.type_err_message, tbl), true
+      end
+      local fixed = false
+      local copy
+      if self.expected.repair and BaseType:is_base_type(self.expected) then
+        for idx, item in ipairs(tbl) do
+          local item_value, item_fixed = self.expected:repair(item)
+          if item_fixed then
+            fixed = true
+            copy = copy or (function()
+              local _accum_0 = { }
+              local _len_0 = 1
+              local _max_0 = (idx - 1)
+              for _index_0 = 1, _max_0 < 0 and #tbl + _max_0 or _max_0 do
+                local v = tbl[_index_0]
+                _accum_0[_len_0] = v
+                _len_0 = _len_0 + 1
+              end
+              return _accum_0
+            end)()
+            if item_value ~= nil then
+              table.insert(copy, item_value)
+            end
+          else
+            if copy then
+              table.insert(copy, item)
+            end
+          end
+        end
+      else
+        for idx, item in ipairs(tbl) do
+          local pass, err = self:check_field(shape_key, item_value, shape_val, tbl)
+          if pass then
+            if copy then
+              table.insert(copy, item)
+            end
+          else
+            local fix_fn = fix_fn or (self.opts and self.opts.repair)
+            assert(fix_fn, "missing repair function for: " .. tostring(err))
+            fixed = true
+            copy = copy or (function()
+              local _accum_0 = { }
+              local _len_0 = 1
+              local _max_0 = (idx - 1)
+              for _index_0 = 1, _max_0 < 0 and #tbl + _max_0 or _max_0 do
+                local v = tbl[_index_0]
+                _accum_0[_len_0] = v
+                _len_0 = _len_0 + 1
+              end
+              return _accum_0
+            end)()
+            table.insert(copy, fix_fn("field_invalid", idx, item))
+          end
+        end
+      end
+      return copy or tbl, fixed
+    end,
+    check_field = function(self, key, value, tbl)
+      if value == self.expected then
+        return true
+      end
+      if self.expected.check_value and BaseType:is_base_type(self.expected) then
+        local res, err = self.expected:check_value(value)
+        if not (res) then
+          return nil, "item " .. tostring(key) .. " in array does not match: " .. tostring(err)
+        end
+      else
+        return nil, "item " .. tostring(key) .. " in array does not match `" .. tostring(self.expected) .. "`"
+      end
+      return true
+    end,
     check_value = function(self, value)
       if self:check_optional(value) then
         return true
@@ -325,24 +434,9 @@ do
         return nil, "expected table for array_of"
       end
       for idx, item in ipairs(value) do
-        local _continue_0 = false
-        repeat
-          if self.expected == item then
-            _continue_0 = true
-            break
-          end
-          if self.expected.check_value and BaseType:is_base_type(self.expected) then
-            local res, err = self.expected:check_value(item)
-            if not (res) then
-              return nil, "item " .. tostring(idx) .. " in array does not match: " .. tostring(err)
-            end
-          else
-            return nil, "item " .. tostring(idx) .. " in array does not match `" .. tostring(self.expected) .. "`"
-          end
-          _continue_0 = true
-        until true
-        if not _continue_0 then
-          break
+        local pass, err = self:check_field(idx, item, value)
+        if not (pass) then
+          return nil, err
         end
       end
       return true
@@ -376,6 +470,8 @@ do
     end
   })
   _base_0.__class = _class_0
+  local self = _class_0
+  self.type_err_message = "expecting table"
   if _parent_0.__inherited then
     _parent_0.__inherited(_parent_0, _class_0)
   end
@@ -389,6 +485,11 @@ do
     is_optional = function(self)
       return MapOf(self.expected_key, self.expected_value, self:clone_opts({
         optional = true
+      }))
+    end,
+    on_repair = function(self, repair_fn)
+      return MapOf(self.expected_key, self.expected_value, self:clone_opts({
+        repair = repair_fn
       }))
     end,
     check_value = function(self, value)
@@ -466,17 +567,109 @@ do
         optional = true
       }))
     end,
+    on_repair = function(self, repair_fn)
+      return Shape(self.shape, self:clone_opts({
+        repair = repair_fn
+      }))
+    end,
     is_open = function(self)
       return Shape(self.shape, self:clone_opts({
         open = true
       }))
+    end,
+    repair = function(self, tbl, fix_fn)
+      if self:check_optional(tbl) then
+        return tbl, false
+      end
+      if not (type(tbl) == "table") then
+        fix_fn = fix_fn or (self.opts and self.opts.repair)
+        assert(fix_fn, "missing repair function for: " .. tostring(self.__class.type_err_message))
+        return fix_fn("table_invalid", self.__class.type_err_message, tbl), true
+      end
+      local fixed = false
+      local remaining_keys
+      if not (self.opts and self.opts.open) then
+        do
+          local _tbl_0 = { }
+          for key in pairs(tbl) do
+            _tbl_0[key] = true
+          end
+          remaining_keys = _tbl_0
+        end
+      end
+      local copy
+      for shape_key, shape_val in pairs(self.shape) do
+        local item_value = tbl[shape_key]
+        if remaining_keys then
+          remaining_keys[shape_key] = nil
+        end
+        if shape_val.repair and BaseType:is_base_type(shape_val) then
+          local field_value, field_fixed = shape_val:repair(item_value)
+          if field_fixed then
+            copy = copy or (function()
+              local _tbl_0 = { }
+              for k, v in pairs(tbl) do
+                _tbl_0[k] = v
+              end
+              return _tbl_0
+            end)()
+            fixed = true
+            copy[shape_key] = field_value
+          end
+        else
+          local pass, err = self:check_field(shape_key, item_value, shape_val, tbl)
+          if not (pass) then
+            fix_fn = fix_fn or (self.opts and self.opts.repair)
+            assert(fix_fn, "missing repair function for: " .. tostring(err))
+            fixed = true
+            copy = copy or (function()
+              local _tbl_0 = { }
+              for k, v in pairs(tbl) do
+                _tbl_0[k] = v
+              end
+              return _tbl_0
+            end)()
+            copy[shape_key] = fix_fn("field_invalid", shape_key, item_value, err, shape_val)
+          end
+        end
+      end
+      if remaining_keys and next(remaining_keys) then
+        fix_fn = fix_fn or (self.opts and self.opts.repair)
+        copy = copy or (function()
+          local _tbl_0 = { }
+          for k, v in pairs(tbl) do
+            _tbl_0[k] = v
+          end
+          return _tbl_0
+        end)()
+        assert(fix_fn, "missing repair function for: extra field")
+        for k in pairs(remaining_keys) do
+          fixed = true
+          copy[k] = fix_fn("extra_field", k, copy[k])
+        end
+      end
+      return copy or tbl, fixed
+    end,
+    check_field = function(self, key, value, expected_value, tbl)
+      if value == expected_value then
+        return true
+      end
+      if expected_value.check_value and BaseType:is_base_type(expected_value) then
+        local res, err = expected_value:check_value(value)
+        if not (res) then
+          return nil, "field `" .. tostring(key) .. "`: " .. tostring(err)
+        end
+      else
+        return nil, "field `" .. tostring(key) .. "` expected `" .. tostring(expected_value) .. "`"
+      end
+      return true
     end,
     check_value = function(self, value)
       if self:check_optional(value) then
         return true
       end
       if not (type(value) == "table") then
-        return nil, "expecting table"
+        return nil, self.__class.type_err_message
       end
       local remaining_keys
       if not (self.opts and self.opts.open) then
@@ -489,28 +682,13 @@ do
         end
       end
       for shape_key, shape_val in pairs(self.shape) do
-        local _continue_0 = false
-        repeat
-          local item_value = value[shape_key]
-          if remaining_keys then
-            remaining_keys[shape_key] = nil
-          end
-          if shape_val == item_value then
-            _continue_0 = true
-            break
-          end
-          if shape_val.check_value and BaseType:is_base_type(shape_val) then
-            local res, err = shape_val:check_value(item_value)
-            if not (res) then
-              return nil, "field `" .. tostring(shape_key) .. "`: " .. tostring(err)
-            end
-          else
-            return nil, "field `" .. tostring(shape_key) .. "` expected `" .. tostring(shape_val) .. "`"
-          end
-          _continue_0 = true
-        until true
-        if not _continue_0 then
-          break
+        local item_value = value[shape_key]
+        if remaining_keys then
+          remaining_keys[shape_key] = nil
+        end
+        local pass, err = self:check_field(shape_key, item_value, shape_val, value)
+        if not (pass) then
+          return nil, err
         end
       end
       if remaining_keys then
@@ -553,6 +731,8 @@ do
     end
   })
   _base_0.__class = _class_0
+  local self = _class_0
+  self.type_err_message = "expecting table"
   if _parent_0.__inherited then
     _parent_0.__inherited(_parent_0, _class_0)
   end
@@ -567,6 +747,14 @@ do
       return Pattern(self.pattern, self:clone_opts({
         optional = true
       }))
+    end,
+    on_repair = function(self, repair_fn)
+      return Pattern(self.pattern, self:clone_opts({
+        repair = repair_fn
+      }))
+    end,
+    describe = function(self)
+      return "pattern `" .. tostring(self.pattern) .. "`"
     end,
     check_value = function(self, value)
       if self:check_optional(value) then
@@ -659,5 +847,5 @@ return {
   check_shape = check_shape,
   types = types,
   BaseType = BaseType,
-  VERSION = "1.1.0"
+  VERSION = "1.2.0"
 }
