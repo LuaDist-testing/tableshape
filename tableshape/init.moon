@@ -29,6 +29,10 @@ class BaseType
   __call: (...) =>
     @check_value ...
 
+class AnyType extends BaseType
+  check_value: => true
+  is_optional: => AnyType
+
 -- basic type check
 class Type extends BaseType
   new: (@t, @opts) =>
@@ -116,6 +120,40 @@ class ArrayOf extends BaseType
 
     true
 
+class MapOf extends BaseType
+  new: (@expected_key, @expected_value, @opts) =>
+
+  is_optional: =>
+    MapOf @expected_key, @expected_value, @clone_opts optional: true
+
+  check_value: (value) =>
+    return true if @check_optional value
+    return nil, "expected table for map_of" unless type(value) == "table"
+
+    for k,v in pairs value
+      -- check key
+      if @expected_key.check_value
+        res, err = @expected_key\check_value k
+        unless res
+          return nil, "field `#{k}` in table does not match: #{err}"
+
+      else
+        unless @expected_key == k
+          return nil, "field `#{k}` does not match `#{@expected_key}`"
+
+
+      -- check value
+      if @expected_value.check_value
+        res, err = @expected_value\check_value v
+        unless res
+          return nil, "field `#{k}` value in table does not match: #{err}"
+
+      else
+        unless @expected_value == v
+          return nil, "field `#{k}` value does not match `#{@expected_value}`"
+
+    true
+
 class Shape extends BaseType
   new: (@shape, @opts) =>
     assert type(@shape) == "table", "expected table for shape"
@@ -178,6 +216,7 @@ class Pattern extends BaseType
       nil, "doesn't match pattern `#{@pattern}`"
 
 types = setmetatable {
+  any: AnyType
   string: Type "string"
   number: Type "number"
   function: Type "function"
@@ -195,6 +234,7 @@ types = setmetatable {
   shape: Shape
   pattern: Pattern
   array_of: ArrayOf
+  map_of: MapOf
 }, __index: (fn_name) =>
   error "Type checker does not exist: `#{fn_name}`"
 
@@ -202,4 +242,4 @@ check_shape = (value, shape) ->
   assert shape.check_value, "missing check_value method from shape"
   shape\check_value value
 
-{ :check_shape, :types, :BaseType, VERSION: "1.0.0" }
+{ :check_shape, :types, :BaseType, VERSION: "1.1.0" }
